@@ -190,8 +190,20 @@ class KeyringBackend(metaclass=KeyringBackendMeta):
             setattr(self, name, value)
 
     def with_properties(self, **kwargs: typing.Any) -> KeyringBackend:
+        """
+        Return a copy of this backend with the given properties set.
+
+        Properties are assigned with ``setattr`` so the descriptor
+        protocol is honored, matching the semantics of direct
+        assignment and environment-based injection
+        (``set_properties_from_env``). Data descriptors (such as
+        ``Windows.Persistence``) receive and may validate the value;
+        non-data descriptors are shadowed by the instance attribute,
+        per standard Python attribute semantics.
+        """
         alt = copy.copy(self)
-        vars(alt).update(kwargs)
+        for name, value in kwargs.items():
+            setattr(alt, name, value)
         return alt
 
 
@@ -270,13 +282,33 @@ class SchemeSelectable:
     {'UserName': 'alice', 'Title': 'contoso'}
     >>> backend._query('contoso', 'alice', foo='bar')
     {'UserName': 'alice', 'Title': 'contoso', 'foo': 'bar'}
+    >>> backend.scheme = 'bogus'
+    Traceback (most recent call last):
+    ...
+    ValueError: Invalid scheme 'bogus'; expected one of: default, KeePassXC
     """
 
-    scheme = 'default'
     schemes: typing.ClassVar = dict(
         default=dict(username='username', service='service'),
         KeePassXC=dict(username='UserName', service='Title'),
     )
+
+    @property
+    def scheme(self) -> str:
+        return getattr(self, '_scheme', 'default')
+
+    @scheme.setter
+    def scheme(self, value: str) -> None:
+        """
+        Validate the scheme at assignment (injection) time rather than
+        deferring the failure to the first query.
+        """
+        if value not in self.schemes:
+            raise ValueError(
+                f'Invalid scheme {value!r}; '
+                f'expected one of: {", ".join(self.schemes)}'
+            )
+        self._scheme = value
 
     def _query(
         self, service: str, username: str | None = None, **base: typing.Any
